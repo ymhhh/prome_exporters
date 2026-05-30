@@ -154,10 +154,8 @@ github.com/xhit/go-str2duration/v2 v2.1.0 h1:lxklc02Drh6ynqX+DdPyp5pCKLUQpRT8bp8
 github.com/xhit/go-str2duration/v2 v2.1.0/go.mod h1:ohY8p+0f07DiV6Em5LKB0s2YpLtXVyJfNt1+BlmyAsU=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
-github.com/ymhhh/go-common v0.0.0-20260430032452-0912d219b78e h1:oNalAdfpn8RBA6O+oB+V1pkv4R969Abmk6v7m65OMxw=
-github.com/ymhhh/go-common v0.0.0-20260430032452-0912d219b78e/go.mod h1:tFTKHN8bNTahK6RrmWqWAZ2zdXXz6MbdkMNozMMGNak=
-github.com/ymhhh/go-common v0.0.0-20260430054618-06aac6f51d82 h1:CYOGKoR0e3f5/DO83rb/505Hf7886oe6URI1s7CjQ8s=
-github.com/ymhhh/go-common v0.0.0-20260430054618-06aac6f51d82/go.mod h1:tFTKHN8bNTahK6RrmWqWAZ2zdXXz6MbdkMNozMMGNak=
+github.com/ymhhh/go-common v0.0.0-20260530084620-e2cfa3ea02af h1:hGiQ7c/ijXLc9v6WDe0BhOKIsiOJZPnOMtoqcz2zPe0=
+github.com/ymhhh/go-common v0.0.0-20260530084620-e2cfa3ea02af/go.mod h1:L7S3hImjG4On1r1D3e2WptApb24hwGP/kjt1oZ/HqH0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.38.0 h1:RkfdswUDRimDg0m2Az18RKOsnI8UDzppJAtj01/Ymk8=

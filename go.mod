@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/exporter-toolkit v0.16.0
 	github.com/prometheus/node_exporter v1.11.1
-	github.com/ymhhh/go-common v0.0.0-20260430054618-06aac6f51d82
+	github.com/ymhhh/go-common v0.0.0-20260530084620-e2cfa3ea02af
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
