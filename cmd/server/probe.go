@@ -61,6 +61,12 @@ func probeHandler(w http.ResponseWriter, r *http.Request, c *config.Config, logg
 		return
 	}
 
+	module, err := copyModule(module)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to copy module config: %s", err), http.StatusInternalServerError)
+		return
+	}
+
 	timeoutSeconds, err := getTimeout(r, module, *timeoutOffset)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to parse timeout from Prometheus header: %s", err), http.StatusInternalServerError)
@@ -232,13 +238,25 @@ func getTimeout(r *http.Request, module config.Module, offset float64) (timeoutS
 	return timeoutSeconds, nil
 }
 
+func copyModule(module config.Module) (config.Module, error) {
+	b, err := yaml.Marshal(module)
+	if err != nil {
+		return config.Module{}, err
+	}
+	var copied config.Module
+	if err := yaml.Unmarshal(b, &copied); err != nil {
+		return config.Module{}, err
+	}
+	return copied, nil
+}
+
 func setHTTPHost(hostname string, module *config.Module) error {
 	// By creating a new hashmap and copying values there we
 	// ensure that the initial configuration remain intact.
 	headers := make(map[string]string)
 	if module.HTTP.Headers != nil {
 		for name, value := range module.HTTP.Headers {
-			if strings.Title(name) == "Host" && value != hostname {
+			if strings.EqualFold(name, "Host") && value != hostname {
 				return fmt.Errorf("host header defined both in module configuration (%s) and with URL-parameter 'hostname' (%s)", value, hostname)
 			}
 			headers[name] = value

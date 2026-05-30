@@ -108,15 +108,18 @@ func (*Collector) Description() string {
 func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 
 	mfs := make(map[string]*dto.MetricFamily)
+	var gatherErrs []error
 	for _, urlStr := range p.Urls {
 		urlP, err := url.Parse(urlStr)
 		if err != nil {
 			p.Logger.Error("parse_url_failed", "url", urlStr, "error", err)
+			gatherErrs = append(gatherErrs, err)
 			continue
 		}
 		mfsServer, err := p.gatherServer(urlP)
 		if err != nil {
 			p.Logger.Error("gather_server_failed", "url", urlStr, "error", err)
+			gatherErrs = append(gatherErrs, err)
 			continue
 		}
 		for name, family := range mfsServer {
@@ -129,6 +132,10 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 		}
 	}
 
+	if len(mfs) == 0 && len(gatherErrs) > 0 {
+		return nil, gatherErrs[0]
+	}
+
 	var metrics []*dto.MetricFamily
 	for _, family := range mfs {
 		metrics = append(metrics, family)
@@ -138,13 +145,16 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 
 func (p *Collector) gatherServer(urlP *url.URL) (map[string]*dto.MetricFamily, error) {
 
-	req, _ := http.NewRequest("GET", urlP.String(), nil)
+	req, err := http.NewRequest("GET", urlP.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 	for key, value := range p.Headers {
 		req.Header.Set(key, value)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		// todo log
+		p.Logger.Error("http request failed", "url", urlP.String(), "err", err)
 		return nil, err
 	}
 	defer internal.IOClose(resp.Body)
@@ -155,7 +165,7 @@ func (p *Collector) gatherServer(urlP *url.URL) (map[string]*dto.MetricFamily, e
 		if scanner.Scan() {
 			errorLine = scanner.Text()
 		}
-		err := fmt.Errorf("when writing to [%s] received status code: %d. body: %s", urlP.String(), resp.StatusCode, errorLine)
+		err := fmt.Errorf("when scraping [%s] received status code: %d. body: %s", urlP.String(), resp.StatusCode, errorLine)
 		p.Logger.Error("http request failed", "err", err)
 		return nil, err
 	}
@@ -213,6 +223,9 @@ func init() {
 		p.client = &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		}
 
 		p.parser, err = defaults.NewParser(p.Logger.With("parser", p.Parser.Name), parsers.Config(p.Parser))

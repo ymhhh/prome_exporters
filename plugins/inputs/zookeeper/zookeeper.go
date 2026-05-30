@@ -81,9 +81,12 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 	}
 
 	mfs := make(map[string]*dto.MetricFamily)
+	var gatherErrs []error
 	for _, serverAddress := range p.Servers {
 		mfsServer, err := p.gatherServer(ctx, serverAddress)
 		if err != nil {
+			p.logger.Error("gather_server_failed", "server", serverAddress, "error", err)
+			gatherErrs = append(gatherErrs, err)
 			continue
 		}
 		for name, family := range mfsServer {
@@ -98,6 +101,9 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 	var metrics []*dto.MetricFamily
 	for _, family := range mfs {
 		metrics = append(metrics, family)
+	}
+	if len(metrics) == 0 && len(gatherErrs) > 0 {
+		return nil, gatherErrs[0]
 	}
 	return metrics, nil
 }
@@ -210,6 +216,10 @@ func (p *Collector) gatherServer(ctx context.Context, address string) (map[strin
 			}
 		}
 		metrics[metricName] = mf
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
 	for _, mf := range metrics {

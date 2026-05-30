@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	metricReg = regexp.MustCompile(`[\.|\-|\ ]`)
+	metricReg = regexp.MustCompile(`[.\- ]`)
 )
 
 type Parser struct {
@@ -45,7 +45,6 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 
 	metricFamilies := make(map[string]*dto.MetricFamily)
 
-	metricFiltered := false
 	for _, values := range kept.Beans {
 		if len(values) == 0 {
 			continue
@@ -108,41 +107,13 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 			if value == nil {
 				continue
 			}
-			//metricName := key
 			metricNames := append(metricPrefixes, strings.TrimSpace(key))
 			metricName := strings.Join(metricNames, "_")
 
 			metricName = metricReg.ReplaceAllString(metricName, "_")
 
-			for _, wl := range p.cfg.Whitelists {
-				if wl.MatchString(metricName) {
-					// 发现匹配白名单字符串，不被过滤
-					metricFiltered = false
-					break
-				} else {
-					// 发现不匹配白名单字符串，过滤
-					metricFiltered = true
-				}
-			}
-
-			if metricFiltered {
-				p.logger.Debug("filter metric with whitelist", "metric", metricName)
-				continue
-			}
-
-			for _, bl := range p.cfg.Blacklists {
-				if bl.MatchString(metricName) {
-					// 发现匹配黑名单字符串，被过滤
-					metricFiltered = true
-					break
-				} else {
-					// 发现不匹配黑名单字符串，过滤
-					metricFiltered = false
-				}
-			}
-
-			if metricFiltered {
-				p.logger.Debug("filter metric with blacklist", "metric", metricName)
+			if !parsers.MatchNameFilter(metricName, p.cfg.Whitelists, p.cfg.Blacklists) {
+				p.logger.Debug("filter metric", "metric", metricName)
 				continue
 			}
 

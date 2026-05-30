@@ -59,7 +59,7 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 				Value: &th,
 			},
 		}
-		if !p.cfg.JMXOptions.IgnoreTimestamp {
+		if !p.cfg.OpenTSDBOptions.IgnoreTimestamp {
 			timestampMs := timestampMsFunc(m.Timestamp)
 			metric.TimestampMs = &timestampMs
 		}
@@ -91,6 +91,6 @@ func timestampMsFunc(t int64) int64 {
 	case 16:
 		return t / 1000
 	default:
-		return time.Now().Unix() / 1e6
+		return time.Now().UnixMilli()
 	}
 }

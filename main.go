@@ -60,6 +60,7 @@ func run() int {
 	case 1:
 		return server.Run(a, webConfig)
 	default:
+		logger.Error("invalid_command_type", "command_type", ec.Exporter.CommandType)
 		return 10
 	}
 }

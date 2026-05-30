@@ -42,9 +42,14 @@ func (p *Parser) Parse(body []byte, tags map[string]string, contentType string) 
 			p.logger.Error("decoding metrics failed", "error", err)
 			return nil, err
 		}
-		if name := mf.GetName(); name != "" {
-			metricFamilies[name] = mf
+		name := mf.GetName()
+		if name == "" {
+			continue
 		}
+		if !parsers.MatchNameFilter(name, p.cfg.Whitelists, p.cfg.Blacklists) {
+			continue
+		}
+		metricFamilies[name] = mf
 	}
 
 	for k, v := range tags {

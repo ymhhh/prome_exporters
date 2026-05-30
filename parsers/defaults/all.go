@@ -11,14 +11,29 @@ import (
 	"github.com/ymhhh/prome_exporters/parsers/prometheus"
 )
 
-func NewParser(logger *slog.Logger, cfg parsers.Config) (parsers.Parser, error) {
+func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
+	out := make([]*regexp.Regexp, 0, len(patterns))
+	for _, s := range patterns {
+		re, err := regexp.Compile(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regexp %q: %w", s, err)
+		}
+		out = append(out, re)
+	}
+	return out, nil
+}
 
-	for _, s := range cfg.PrefixWhitelist {
-		cfg.Whitelists = append(cfg.Whitelists, regexp.MustCompile(s))
+func NewParser(logger *slog.Logger, cfg parsers.Config) (parsers.Parser, error) {
+	var err error
+
+	cfg.Whitelists, err = compilePatterns(cfg.PrefixWhitelist)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, s := range cfg.PrefixBlacklist {
-		cfg.Blacklists = append(cfg.Blacklists, regexp.MustCompile(s))
+	cfg.Blacklists, err = compilePatterns(cfg.PrefixBlacklist)
+	if err != nil {
+		return nil, err
 	}
 
 	switch cfg.Name {

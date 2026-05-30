@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type HTTP struct {
 
 	client     *http.Client
 	serializer serializers.Serializer
+	logger     *slog.Logger
 
 	PrintMetrics bool `yaml:"print_metrics" json:"print_metrics"`
 }
@@ -149,6 +151,9 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		for _, nonRetryableStatusCode := range h.NonRetryableStatusCodes {
 			if resp.StatusCode == nonRetryableStatusCode {
+				if h.logger != nil {
+					h.logger.Warn("non_retryable_status_code", "url", h.URL, "status_code", resp.StatusCode)
+				}
 				return nil
 			}
 		}
@@ -177,7 +182,9 @@ func init() {
 			opt(options)
 		}
 
-		p := &HTTP{}
+		p := &HTTP{
+			logger: options.Logger,
+		}
 
 		if options.Config != nil {
 			if err := options.Config.Object(p); err != nil {
@@ -205,6 +212,9 @@ func init() {
 		p.client = &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		}
 
 		var err error

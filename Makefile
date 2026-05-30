@@ -23,7 +23,7 @@ PROMTOOL_VERSION ?= 2.30.0
 PROMTOOL_URL     ?= https://github.com/prometheus/prometheus/releases/download/v$(PROMTOOL_VERSION)/prometheus-$(PROMTOOL_VERSION).$(GO_BUILD_PLATFORM).tar.gz
 PROMTOOL         ?= $(FIRST_GOPATH)/bin/promtool
 
-DOCKER_IMAGE_NAME       ?= node-exporter
+DOCKER_IMAGE_NAME       ?= prome-exporters
 MACH                    ?= $(shell uname -m)
 
 GOLANGCI_LINT_OPTS=-D errcheck

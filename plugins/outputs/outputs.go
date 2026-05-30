@@ -16,7 +16,7 @@ func RegisterFactory(name string, fn any) {
 		panic(errcode.New("empty output name"))
 	}
 	if fn == nil {
-		panic(errcode.New("nil collector factory"))
+		panic(errcode.New("nil output factory"))
 	}
 
 	switch f := fn.(type) {

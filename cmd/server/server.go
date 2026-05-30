@@ -1,7 +1,12 @@
 package server
 
 import (
+	"context"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -51,7 +56,7 @@ func init() {
 func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 
 	if err := a.Run(); err != nil {
-		a.Logger.Error("failed_run_agent", "error", err, "config", a.Config)
+		a.Logger.Error("failed_run_agent", "error", err)
 		return 3
 	}
 
@@ -60,7 +65,9 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 	reg.MustRegister(
 		version.NewCollector("prome_exporters"),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		collectors.NewGoCollector())
+		collectors.NewGoCollector(),
+		moduleUnknownCounter,
+	)
 	h := promhttp.HandlerFor(
 		prometheus.Gatherers{reg},
 		promhttp.HandlerOpts{
@@ -74,12 +81,13 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 		h = promhttp.InstrumentMetricHandler(reg, h)
 	}
 
-	http.Handle(*metricsPath, h)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.Handle(*metricsPath, h)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
-			<head><title>Node Exporter</title></head>
+			<head><title>prome_exporters</title></head>
 			<body>
-			<h1>Node Exporter</h1>
+			<h1>prome_exporters</h1>
 			<p><a href="` + *metricsPath + `">Metrics</a></p>
 			</body>
 			</html>`))
@@ -90,7 +98,7 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 
 		rh := &resultHistory{maxResults: *historyLimit}
 
-		http.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 			probeHandler(w, r, a.Config.Exporter.BlackboxProbe.Modules, a.Logger, rh)
 		})
 
@@ -105,9 +113,24 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 	}
 
 	a.Logger.Info("Listening on", "address", addr)
-	server := &http.Server{Addr: addr}
-	if err := web.ListenAndServe(server, webConfig, a.Logger); err != nil {
+	server := &http.Server{Addr: addr, Handler: mux}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		a.Logger.Info("shutdown signal received")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			a.Logger.Error("server shutdown failed", "err", err)
+		}
+	}()
+
+	if err := web.ListenAndServe(server, webConfig, a.Logger); err != nil && err != http.ErrServerClosed {
 		a.Logger.Error("listen failed", "err", err)
+		a.Stop()
 		return 1
 	}
 	a.Stop()

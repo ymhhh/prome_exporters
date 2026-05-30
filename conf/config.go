@@ -1,10 +1,12 @@
 package conf
 
 import (
+	"fmt"
 	"os"
 
 	beConfig "github.com/prometheus/blackbox_exporter/config"
 	"github.com/ymhhh/go-common/config"
+	"github.com/ymhhh/go-common/errcode"
 	"github.com/ymhhh/go-common/types"
 	"gopkg.in/yaml.v3"
 )
@@ -49,6 +51,38 @@ type OutputConfig struct {
 }
 
 func (p *Config) check() error {
+	switch p.Exporter.CommandType {
+	case 0, 1:
+	default:
+		return errcode.Newf("invalid exporter.command_type %d: must be 0 (command) or 1 (server)", p.Exporter.CommandType)
+	}
+
+	if len(p.Inputs) == 0 {
+		return errcode.Newf("at least one input is required")
+	}
+
+	for i, input := range p.Inputs {
+		if input.Name == "" {
+			return errcode.Newf("inputs[%d].name is required", i)
+		}
+	}
+
+	if p.Output == nil {
+		return errcode.Newf("output is required")
+	}
+	if p.Output.Name == "" {
+		return errcode.Newf("output.name is required")
+	}
+
+	if p.Exporter.BlackboxProbe.Open {
+		if p.Exporter.CommandType != 1 {
+			return errcode.Newf("blackbox_probe.open requires command_type 1 (server mode)")
+		}
+		if p.Exporter.BlackboxProbe.Modules == nil || len(p.Exporter.BlackboxProbe.Modules.Modules) == 0 {
+			return errcode.Newf("blackbox_probe.modules is required when blackbox_probe.open is true")
+		}
+	}
+
 	return nil
 }
 
@@ -63,7 +97,7 @@ func GetConfigWithFile(filename string) (*Config, error) {
 	}
 
 	if err = ec.check(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	return ec, nil
 }

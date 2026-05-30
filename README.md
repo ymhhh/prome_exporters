@@ -96,7 +96,7 @@ Parsers convert raw bytes into `map[string]*dto.MetricFamily`.
 - Prometheus text / protobuf-delimited (`prometheus`)
 - OpenTSDB (`opentsdb`)
 
-[config sample](exporters_sample.yaml)
+[config sample](prome_exporters_sample.yaml)
 
 ## todo
 

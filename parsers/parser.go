@@ -22,6 +22,9 @@ type Config struct {
 
 	// JMX
 	JMXOptions `yaml:",inline" json:",inline"`
+
+	// OpenTSDB
+	OpenTSDBOptions `yaml:",inline" json:",inline"`
 }
 
 type PrometheusOptions struct {
@@ -30,6 +33,32 @@ type PrometheusOptions struct {
 type JMXOptions struct {
 	IgnorePrefix    bool `yaml:"jmx_ignore_prefix" json:"jmx_ignore_prefix"`
 	IgnoreTimestamp bool `yaml:"jmx_ignore_timestamp" json:"jmx_ignore_timestamp"`
+}
+
+type OpenTSDBOptions struct {
+	IgnoreTimestamp bool `yaml:"opentsdb_ignore_timestamp" json:"opentsdb_ignore_timestamp"`
+}
+
+// MatchNameFilter returns true when name passes whitelist/blacklist rules.
+func MatchNameFilter(name string, whitelists, blacklists []*regexp.Regexp) bool {
+	if len(whitelists) > 0 {
+		matched := false
+		for _, wl := range whitelists {
+			if wl.MatchString(name) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	for _, bl := range blacklists {
+		if bl.MatchString(name) {
+			return false
+		}
+	}
+	return true
 }
 
 type Parser interface {
