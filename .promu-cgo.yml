@@ -1,0 +1,41 @@
+go:
+  # Whenever the Go version is updated here, .circle/config.yml and
+  # .promu.yml should also be updated.
+  version: 1.25
+  cgo: true
+repository:
+  path: github.com/ymhhh/prome_exporters
+build:
+  binaries:
+    - name: prome_exporters
+  flags: -a -tags 'netgo osusergo static_build'
+  ldflags: |
+    -X github.com/prometheus/common/version.Version={{.Version}}
+    -X github.com/prometheus/common/version.Revision={{.Revision}}
+    -X github.com/prometheus/common/version.Branch={{.Branch}}
+    -X github.com/prometheus/common/version.BuildUser={{user}}@{{host}}
+    -X github.com/prometheus/common/version.BuildDate={{date "20060102-15:04:05"}}
+tarball:
+  files:
+    - LICENSE
+    - NOTICE
+crossbuild:
+  platforms:
+    - darwin/amd64
+    - darwin/arm64
+    - netbsd/amd64
+    - netbsd/386
+    - linux/amd64
+    - linux/arm64
+    - linux/arm
+    - linux/386
+    - linux/ppc64le
+    - linux/s390x
+    - linux/mips64
+    - linux/mips64le
+    - linux/mips64p32
+    - linux/mips64p32le
+    - darwin/amd64
+    - darwin/arm64
+    - netbsd/amd64
+    - netbsd/386
