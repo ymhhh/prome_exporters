@@ -9,6 +9,7 @@ import (
 	"github.com/ymhhh/prome_exporters/parsers/jmx"
 	"github.com/ymhhh/prome_exporters/parsers/opentsdb"
 	"github.com/ymhhh/prome_exporters/parsers/prometheus"
+	"github.com/ymhhh/prome_exporters/parsers/simple"
 )
 
 func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
@@ -43,6 +44,8 @@ func NewParser(logger *slog.Logger, cfg parsers.Config) (parsers.Parser, error) 
 		return jmx.NewParser(logger, cfg)
 	case "opentsdb":
 		return opentsdb.NewParser(logger, cfg)
+	case "simple":
+		return simple.NewParser(logger, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported parser type")
 	}

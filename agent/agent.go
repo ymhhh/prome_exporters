@@ -27,19 +27,14 @@ type Agent struct {
 
 	ctx      context.Context
 	cancel   context.CancelFunc
-	stopChan chan struct{}
 	stopOnce sync.Once
 
 	inputWG   sync.WaitGroup
 	metricsWG sync.WaitGroup
 	outputWG  sync.WaitGroup
 
-	runningInputs []*runningInput
-	runningOutput *runningOutput
-
-	metricsChan chan []*dto.MetricFamily
-
-	metricsBuffer metricsBuffer
+	runningInputs  []*runningInput
+	runningOutputs map[string]*runningOutput
 }
 
 type metricsBuffer struct {
@@ -97,25 +92,26 @@ type runningInput struct {
 	promeCollector   plugins.InputPrometheusCollector
 	metricsCollector plugins.InputMetricsCollector
 
+	output   *runningOutput
 	stopChan chan struct{}
 }
 
 type runningOutput struct {
-	output   plugins.Output
-	stopChan chan struct{}
+	name          string
+	output        plugins.Output
+	logger        *slog.Logger
+	flushInterval time.Duration
+	metricsChan   chan []*dto.MetricFamily
+	metricsBuffer metricsBuffer
+	stopChan      chan struct{}
 }
 
 // NewAgent returns an Agent for the given Config.
 func NewAgent(cfg *conf.Config, logger *slog.Logger) (*Agent, error) {
-	bufSize := len(cfg.Inputs)
-	if bufSize < 1 {
-		bufSize = 1
-	}
 	a := &Agent{
-		Config: cfg,
-		Logger: logger,
-
-		metricsChan: make(chan []*dto.MetricFamily, bufSize),
+		Config:         cfg,
+		Logger:         logger,
+		runningOutputs: make(map[string]*runningOutput),
 	}
 	if err := a.checkConfig(); err != nil {
 		return nil, err
@@ -124,6 +120,9 @@ func NewAgent(cfg *conf.Config, logger *slog.Logger) (*Agent, error) {
 }
 
 func (p *Agent) checkConfig() error {
+	if err := p.Config.Check(); err != nil {
+		return err
+	}
 
 	if p.Config.Exporter.MetricBufferLimit <= 0 {
 		p.Config.Exporter.MetricBufferLimit = 10000
@@ -131,76 +130,22 @@ func (p *Agent) checkConfig() error {
 	if p.Config.Exporter.MetricBatchSize <= 0 {
 		p.Config.Exporter.MetricBatchSize = 10000
 	}
-	// inputs
-	for _, inputConfig := range p.Config.Inputs {
 
-		interval := time.Duration(inputConfig.Interval)
-		if interval < minInterval {
-			interval = minInterval
-		}
-		input, err := inputs.GetFactory(inputConfig.Name)
-		if err != nil {
-			return err
-		}
-
-		logger := p.Logger.With("input", inputConfig.Name)
-
-		opts := []plugins.Option{
-			plugins.Logger(logger),
-		}
-
-		if inputConfig.Options != nil {
-			c, err := conf.OptionsToConfig(inputConfig.Options)
-			if err != nil {
-				return err
-			}
-			opts = append(opts, plugins.Config(c))
-		}
-
-		logger.Info("init_input", "interval", interval)
-
-		runningInput := &runningInput{
-			input:    input,
-			interval: interval,
-			logger:   logger,
-
-			stopChan: make(chan struct{}, 1),
-		}
-		switch input.InputType() {
-		case plugins.InputTypePrometheusCollector:
-			runningInput.promeCollector, err = input.NewPrometheusCollector(opts...)
-			if err != nil {
-				return err
-			}
-			reg := prometheus.NewRegistry()
-			runningInput.promeRegisterer = reg
-			runningInput.promeGatherer = reg
-			if err = runningInput.promeRegisterer.Register(runningInput.promeCollector); err != nil {
-				return err
-			}
-		case plugins.InputTypeMetricsCollector:
-			runningInput.metricsCollector, err = input.NewMetricsCollector(opts...)
-			if err != nil {
-				return err
-			}
-		}
-
-		p.runningInputs = append(p.runningInputs, runningInput)
+	defaultFlush := time.Duration(p.Config.Exporter.FlushInterval)
+	if defaultFlush < minInterval {
+		defaultFlush = minInterval
 	}
 
-	// output
-	{
-		outFun, err := outputs.GetFactory(p.Config.Output.Name)
+	for key, outCfg := range p.Config.Outputs {
+		outFun, err := outputs.GetFactory(outCfg.Name)
 		if err != nil {
 			return err
 		}
 
-		opts := []plugins.Option{
-			plugins.Logger(p.Logger.With("output", p.Config.Output.Name)),
-		}
-
-		if p.Config.Output.Options != nil {
-			c, err := conf.OptionsToConfig(p.Config.Output.Options)
+		logger := p.Logger.With("output", key, "plugin", outCfg.Name)
+		opts := []plugins.Option{plugins.Logger(logger)}
+		if outCfg.Options != nil {
+			c, err := conf.OptionsToConfig(outCfg.Options)
 			if err != nil {
 				return err
 			}
@@ -211,7 +156,80 @@ func (p *Agent) checkConfig() error {
 		if err != nil {
 			return err
 		}
-		p.runningOutput = &runningOutput{output: output, stopChan: make(chan struct{}, 1)}
+
+		flush := time.Duration(outCfg.FlushInterval)
+		if flush < minInterval {
+			flush = defaultFlush
+		}
+
+		bufSize := len(p.Config.Inputs)
+		if bufSize < 1 {
+			bufSize = 1
+		}
+		p.runningOutputs[key] = &runningOutput{
+			name:          key,
+			output:        output,
+			logger:        logger,
+			flushInterval: flush,
+			metricsChan:   make(chan []*dto.MetricFamily, bufSize),
+			stopChan:      make(chan struct{}, 1),
+		}
+	}
+
+	for _, inputConfig := range p.Config.Inputs {
+		interval := time.Duration(inputConfig.Interval)
+		if interval < minInterval {
+			interval = minInterval
+		}
+		input, err := inputs.GetFactory(inputConfig.Name)
+		if err != nil {
+			return err
+		}
+
+		runOut, ok := p.runningOutputs[inputConfig.Output]
+		if !ok {
+			return errcode.Newf("output %q not initialized for input %s", inputConfig.Output, inputConfig.Name)
+		}
+
+		logger := p.Logger.With("input", inputConfig.Name, "output", inputConfig.Output)
+		opts := []plugins.Option{plugins.Logger(logger)}
+		if inputConfig.Options != nil {
+			c, err := conf.OptionsToConfig(inputConfig.Options)
+			if err != nil {
+				return err
+			}
+			opts = append(opts, plugins.Config(c))
+		}
+
+		logger.Info("init_input", "interval", interval)
+
+		runningIn := &runningInput{
+			input:    input,
+			interval: interval,
+			logger:   logger,
+			output:   runOut,
+			stopChan: make(chan struct{}, 1),
+		}
+		switch input.InputType() {
+		case plugins.InputTypePrometheusCollector:
+			runningIn.promeCollector, err = input.NewPrometheusCollector(opts...)
+			if err != nil {
+				return err
+			}
+			reg := prometheus.NewRegistry()
+			runningIn.promeRegisterer = reg
+			runningIn.promeGatherer = reg
+			if err = runningIn.promeRegisterer.Register(runningIn.promeCollector); err != nil {
+				return err
+			}
+		case plugins.InputTypeMetricsCollector:
+			runningIn.metricsCollector, err = input.NewMetricsCollector(opts...)
+			if err != nil {
+				return err
+			}
+		}
+
+		p.runningInputs = append(p.runningInputs, runningIn)
 	}
 	return nil
 }
@@ -237,9 +255,7 @@ func applyGlobalTags(mf *dto.MetricFamily, tags map[string]string) {
 }
 
 func (p *Agent) runInputs() error {
-
 	gather := func(input *runningInput) ([]*dto.MetricFamily, error) {
-
 		switch input.input.InputType() {
 		case plugins.InputTypePrometheusCollector:
 			metricFamilies, err := input.promeGatherer.Gather()
@@ -265,11 +281,11 @@ func (p *Agent) runInputs() error {
 				input.logger.Error("error", "error", err.Error())
 				return nil, err
 			}
-
 			return metrics, nil
 		}
 		return nil, nil
 	}
+
 	for _, input := range p.runningInputs {
 		if _, err := gather(input); err != nil {
 			return err
@@ -288,8 +304,11 @@ func (p *Agent) runInputs() error {
 						continue
 					}
 					in.logger.Debug("input_gather_metrics", "length", len(metrics))
+					if len(metrics) == 0 {
+						continue
+					}
 					select {
-					case p.metricsChan <- metrics:
+					case in.output.metricsChan <- metrics:
 					case <-p.ctx.Done():
 						return
 					case <-in.stopChan:
@@ -307,7 +326,7 @@ func (p *Agent) runInputs() error {
 }
 
 func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
-	lenBuffer := p.metricsBuffer.Length()
+	lenBuffer := runOut.metricsBuffer.Length()
 	if lenBuffer <= 0 {
 		return true
 	}
@@ -315,11 +334,11 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 		batch = lenBuffer
 	}
 
-	p.Logger.Debug("write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
+	runOut.logger.Debug("write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
 
-	metricBuffers, ok := p.metricsBuffer.PopMany(batch)
+	metricBuffers, ok := runOut.metricsBuffer.PopMany(batch)
 	if !ok {
-		p.Logger.Warn("pop_metrics_not_correct", "batch_size", batch)
+		runOut.logger.Warn("pop_metrics_not_correct", "batch_size", batch)
 		return false
 	}
 
@@ -332,8 +351,6 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 			continue
 		}
 		// Clone so merge/global tags never mutate buffered originals.
-		// Otherwise a failed Write() + PrependMany() would retry already-merged families
-		// and duplicate samples on every flush attempt.
 		cloned := proto.Clone(metricFamily).(*dto.MetricFamily)
 		mf, ok := mapMetrics[cloned.GetName()]
 		if ok {
@@ -345,7 +362,7 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 		mapMetrics[mf.GetName()] = mf
 	}
 	if len(names) == 0 {
-		p.Logger.Warn("write_output_failed", "buffer_length", lenBuffer, "error", "at least one metric")
+		runOut.logger.Warn("write_output_failed", "buffer_length", lenBuffer, "error", "at least one metric")
 		return true
 	}
 
@@ -359,85 +376,78 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 	}
 
 	if err := runOut.output.Write(metrics); err != nil {
-		p.Logger.Error("write_output_failed", "buffer_length", lenBuffer, "error", err)
-		p.metricsBuffer.PrependMany(metricBuffers)
+		runOut.logger.Error("write_output_failed", "buffer_length", lenBuffer, "error", err)
+		runOut.metricsBuffer.PrependMany(metricBuffers)
 		return false
 	}
 	return true
 }
 
 func (p *Agent) runOutputs() error {
-	interval := time.Duration(p.Config.Exporter.FlushInterval)
-	if interval < minInterval {
-		interval = minInterval
-	}
-	p.Logger.Info("run_output", "interval", interval)
-
-	output := p.runningOutput
-	if output == nil {
-		return errcode.Newf("nil running output")
-	}
-
-	if err := output.output.Connect(); err != nil {
-		return err
-	}
-
-	p.outputWG.Add(1)
-	go func(runOut *runningOutput) {
-		defer p.outputWG.Done()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				for p.metricsBuffer.Length() > 0 {
-					batch := p.Config.Exporter.MetricBatchSize
-					if !p.flushBatch(runOut, batch) {
-						break
-					}
-				}
-			case <-runOut.stopChan:
-				for p.metricsBuffer.Length() > 0 {
-					batch := p.metricsBuffer.Length()
-					if batch > p.Config.Exporter.MetricBatchSize {
-						batch = p.Config.Exporter.MetricBatchSize
-					}
-					if !p.flushBatch(runOut, batch) {
-						break
-					}
-				}
-				if err := runOut.output.Close(); err != nil {
-					p.Logger.Error("failed_stop_output", "error", err)
-				}
-				return
-			}
+	for _, output := range p.runningOutputs {
+		if err := output.output.Connect(); err != nil {
+			return err
 		}
-	}(output)
+		p.runMetricsChan(output)
 
+		p.outputWG.Add(1)
+		go func(runOut *runningOutput) {
+			defer p.outputWG.Done()
+			runOut.logger.Info("run_output", "interval", runOut.flushInterval)
+			ticker := time.NewTicker(runOut.flushInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					for runOut.metricsBuffer.Length() > 0 {
+						batch := p.Config.Exporter.MetricBatchSize
+						if !p.flushBatch(runOut, batch) {
+							break
+						}
+					}
+				case <-runOut.stopChan:
+					for runOut.metricsBuffer.Length() > 0 {
+						batch := runOut.metricsBuffer.Length()
+						if batch > p.Config.Exporter.MetricBatchSize {
+							batch = p.Config.Exporter.MetricBatchSize
+						}
+						if !p.flushBatch(runOut, batch) {
+							break
+						}
+					}
+					if err := runOut.output.Close(); err != nil {
+						runOut.logger.Error("failed_stop_output", "error", err)
+					}
+					return
+				}
+			}
+		}(output)
+	}
 	return nil
 }
 
-func (p *Agent) runMetricsChan() {
+func (p *Agent) runMetricsChan(runOut *runningOutput) {
 	p.metricsWG.Add(1)
 	go func() {
 		defer p.metricsWG.Done()
 		for {
 			select {
-			case metrics, ok := <-p.metricsChan:
+			case metrics, ok := <-runOut.metricsChan:
 				if !ok {
 					return
 				}
-				p.Logger.Debug("read_buffer_from_metric_chan", "length", len(metrics))
+				runOut.logger.Debug("read_buffer_from_metric_chan", "length", len(metrics))
 				for _, metric := range metrics {
-					lenBuffer := p.metricsBuffer.Length()
+					lenBuffer := runOut.metricsBuffer.Length()
 					if lenBuffer >= p.Config.Exporter.MetricBufferLimit {
-						p.Logger.Warn("out_of_the_limit_of_buffer", "buffer_length", lenBuffer, "limit", p.Config.Exporter.MetricBufferLimit, "ignore_metric", metric.GetName())
+						runOut.logger.Warn("out_of_the_limit_of_buffer",
+							"buffer_length", lenBuffer,
+							"limit", p.Config.Exporter.MetricBufferLimit,
+							"ignore_metric", metric.GetName())
 						continue
 					}
-					p.metricsBuffer.Push(metric)
+					runOut.metricsBuffer.Push(metric)
 				}
-			case <-p.stopChan:
-				return
 			}
 		}
 	}()
@@ -453,6 +463,11 @@ func (p *Agent) stopRunningInputs() {
 			}
 			close(input.stopChan)
 		}
+		if closer, ok := input.metricsCollector.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil && input.logger != nil {
+				input.logger.Error("failed_close_input", "error", err)
+			}
+		}
 	}
 }
 
@@ -465,19 +480,19 @@ func (p *Agent) unregisterPrometheusInputs() {
 }
 
 func (p *Agent) stopRunningOutputs() {
-	if p.runningOutput != nil && p.runningOutput.stopChan != nil {
-		select {
-		case p.runningOutput.stopChan <- struct{}{}:
-		default:
+	for _, runOut := range p.runningOutputs {
+		if runOut.stopChan != nil {
+			select {
+			case runOut.stopChan <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
 
 func (p *Agent) Run() error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-	p.stopChan = make(chan struct{})
 
-	p.runMetricsChan()
 	if err := p.runInputs(); err != nil {
 		_ = p.Stop()
 		return err
@@ -498,15 +513,10 @@ func (p *Agent) Stop() error {
 		p.inputWG.Wait()
 		p.unregisterPrometheusInputs()
 
-		if p.metricsChan != nil {
-			close(p.metricsChan)
-		}
-		if p.stopChan != nil {
-			select {
-			case p.stopChan <- struct{}{}:
-			default:
+		for _, runOut := range p.runningOutputs {
+			if runOut.metricsChan != nil {
+				close(runOut.metricsChan)
 			}
-			close(p.stopChan)
 		}
 		p.metricsWG.Wait()
 

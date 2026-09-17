@@ -36,6 +36,8 @@ exporter:
 
 Each input needs `name` and (optionally) `interval` (default / minimum `1s`). Plugin-specific fields belong under `options`, not at the input root.
 
+With named `outputs`, each input should set `output: <name>` to select the destination. A legacy top-level `output:` is still accepted and becomes `outputs.default`.
+
 ### `prometheus_node_exporter`
 
 ```yaml
@@ -95,6 +97,7 @@ Reads the `mntr` command over TCP (optional TLS).
 ```yaml
 - name: zookeeper
   interval: 10s
+  output: pushgateway
   options:
     servers: ["127.0.0.1:2181"]
     timeout: 5s
@@ -102,25 +105,84 @@ Reads the `mntr` command over TCP (optional TLS).
       parser_type: zookeeper
 ```
 
-## Output
+### `exec`
 
-Only `name` and `options` are read. A top-level `output.url` or `output.interval` is ignored; flush timing is `exporter.flush_interval`.
+Recursively discovers `.sh` / `.py` scripts under a directory. Each script runs on its own schedule. Add/remove/edit (MD5 change) is picked up on the discover loop (default 5s) without restarting the agent.
+
+```yaml
+- name: exec
+  interval: 1s                 # how often to drain the script metric buffer
+  output: pushgateway
+  options:
+    directory: /opt/prome_exporters/scripts
+    recursive: true
+    default_interval: 30s
+    timeout: 10s
+    discover_interval: 5s
+    python: python3
+    shell: bash
+    parser: simple             # default; can use prometheus / jmx / opentsdb
+```
+
+Script header (first 32 lines, `#` comments after shebang):
+
+```bash
+#!/usr/bin/env bash
+# prome.interval: 30s
+# prome.timeout: 10s
+echo "starting"
+echo "METRIC app_qps 123.4 cluster=prod"
+```
+
+```python
+#!/usr/bin/env python3
+# prome.schedule: */5 * * * *
+print("METRIC disk_used_bytes 1024 mount=/data")
+```
+
+Priority: `prome.schedule` (5-field cron) > `prome.interval` (Go duration) > `default_interval`.
+
+Stdout format for `parser: simple` — only lines whose first token is exactly `METRIC` (case-sensitive) become samples; other prints are ignored:
+
+```
+METRIC <name> <value> [key=value ...]
+```
+
+## Outputs
+
+Declare one or more named outputs. Multiple inputs may share the same output key.
+
+```yaml
+outputs:
+  pushgateway:
+    name: http
+    flush_interval: 10s        # optional; falls back to exporter.flush_interval
+    options:
+      url: http://127.0.0.1:9091/metrics/job/node
+  jmx_sink:
+    name: http
+    options:
+      url: http://127.0.0.1:9091/metrics/job/jmx
+```
+
+Legacy single `output:` still works and is normalized to `outputs.default`.
 
 ### `http`
 
 ```yaml
-output:
-  name: http
-  options:
-    url: http://127.0.0.1:9091/metrics/job/test
-    method: POST                # POST or PUT; default POST
-    timeout: 10s
-    content_encoding: gzip      # optional
-    print_metrics: false
-    username: ""
-    password: ""
-    serializer_config:
-      name: prometheus
+outputs:
+  pushgateway:
+    name: http
+    options:
+      url: http://127.0.0.1:9091/metrics/job/test
+      method: POST                # POST or PUT; default POST
+      timeout: 10s
+      content_encoding: gzip      # optional
+      print_metrics: false
+      username: ""
+      password: ""
+      serializer_config:
+        name: prometheus
 ```
 
 Default URL is `http://127.0.0.1:9091/metrics/job/kolekti`.
@@ -132,6 +194,7 @@ Default URL is `http://127.0.0.1:9091/metrics/job/kolekti`.
 | `prometheus` | exposition text or protobuf-delimited | Content-Type selects the decoder |
 | `jmx` | Jolokia-style JSON beans | Bean tags are isolated; `tag.*` uses a real prefix strip (`tag.gc` → `gc`) |
 | `opentsdb` | JSON array of datapoints | Optional `opentsdb_ignore_timestamp` |
+| `simple` | `METRIC name value [k=v ...]` lines | Used by `exec` by default; non-`METRIC` lines ignored |
 
 ## Flags
 

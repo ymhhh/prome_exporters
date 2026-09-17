@@ -1,10 +1,24 @@
+outputs:
+  pushgateway:
+    name: http
+    options:
+      url: http://localhost:9091/metrics/job/test
+      print_metrics: false
+  jmx_sink:
+    name: http
+    options:
+      url: http://localhost:9091/metrics/job/jmx
+      print_metrics: false
+
 inputs:
   - name: prometheus_node_exporter
     interval: 5s # defaults 1s
+    output: pushgateway
     options:
       filters: [ "processes", "textfile.directory", "systemd" ]
   - name: http
     interval: 5s
+    output: jmx_sink
     options:
       urls: [ "http://127.0.0.1:10000/jmx" ]
       parser: jmx
@@ -12,6 +26,7 @@ inputs:
         parser_type: jmx
   - name: syncer
     interval: 5s
+    output: pushgateway
     options:
       urls: [ "http://localhost:8080/metrics" ]
       parser: prometheus
@@ -22,21 +37,29 @@ inputs:
         server_code: syncer
   - name: http
     interval: 10s
+    output: pushgateway
     options:
       urls: [ "http://127.0.0.1:4242/api/stats" ]
       parser: opentsdb
   - name: zookeeper
     interval: 10s
+    output: pushgateway
     options:
       servers: [ "127.0.0.1:2181", "127.0.0.2" ]
       tags:
         parser_type: zookeeper
-
-output:
-  name: http
-  options:
-    url: http://localhost:9091/metrics/job/test
-    print_metrics: false
+  - name: exec
+    interval: 1s # drains script metric buffer
+    output: pushgateway
+    options:
+      directory: /opt/prome_exporters/scripts
+      recursive: true
+      default_interval: 30s
+      timeout: 10s
+      discover_interval: 5s
+      python: python3
+      shell: bash
+      parser: simple
 
 exporter:
   command_type: 1 # 0 command, 1 server

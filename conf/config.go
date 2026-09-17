@@ -11,11 +11,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultOutputName = "default"
+
 type Config struct {
 	Exporter ExporterConfig `yaml:"exporter" json:"exporter"`
 
-	Inputs []*InputsConfig `yaml:"inputs" json:"inputs"`
-	Output *OutputConfig   `yaml:"output" json:"output"`
+	Inputs  []*InputsConfig          `yaml:"inputs" json:"inputs"`
+	Output  *OutputConfig            `yaml:"output" json:"output"`
+	Outputs map[string]*OutputConfig `yaml:"outputs" json:"outputs"`
 }
 
 type ExporterConfig struct {
@@ -40,17 +43,72 @@ type InputsConfig struct {
 	Name     string         `yaml:"name" json:"name"`
 	Interval types.Duration `yaml:"interval" json:"interval"`
 
+	// Output is the key of an entry in Outputs.
+	Output string `yaml:"output" json:"output"`
+
 	Tags map[string]string `yaml:"tags" json:"tags"`
 
 	Options config.Options `json:"options" yaml:"options"`
 }
 
 type OutputConfig struct {
-	Name    string         `yaml:"name" json:"name"`
-	Options config.Options `json:"options" yaml:"options"`
+	Name          string         `yaml:"name" json:"name"`
+	FlushInterval types.Duration `yaml:"flush_interval" json:"flush_interval"`
+	Options       config.Options `json:"options" yaml:"options"`
 }
 
-func (p *Config) check() error {
+// normalizeOutputs merges legacy top-level output into Outputs as "default".
+func (p *Config) normalizeOutputs() error {
+	if p.Outputs == nil {
+		p.Outputs = make(map[string]*OutputConfig)
+	}
+
+	if p.Output != nil {
+		if _, exists := p.Outputs[defaultOutputName]; exists {
+			return errcode.Newf("outputs.%s conflicts with legacy top-level output", defaultOutputName)
+		}
+		p.Outputs[defaultOutputName] = p.Output
+		p.Output = nil
+	}
+
+	if len(p.Outputs) == 0 {
+		return errcode.Newf("at least one output is required (output or outputs)")
+	}
+
+	for key, out := range p.Outputs {
+		if key == "" {
+			return errcode.Newf("outputs key must not be empty")
+		}
+		if out == nil {
+			return errcode.Newf("outputs.%s is nil", key)
+		}
+		if out.Name == "" {
+			return errcode.Newf("outputs.%s.name is required", key)
+		}
+	}
+
+	onlyDefault := len(p.Outputs) == 1
+	if _, ok := p.Outputs[defaultOutputName]; onlyDefault && ok {
+		for _, input := range p.Inputs {
+			if input.Output == "" {
+				input.Output = defaultOutputName
+			}
+		}
+		return nil
+	}
+
+	for i, input := range p.Inputs {
+		if input.Output == "" {
+			return errcode.Newf("inputs[%d].output is required when multiple named outputs are configured", i)
+		}
+		if _, ok := p.Outputs[input.Output]; !ok {
+			return errcode.Newf("inputs[%d].output %q not found in outputs", i, input.Output)
+		}
+	}
+	return nil
+}
+
+func (p *Config) Check() error {
 	switch p.Exporter.CommandType {
 	case 0, 1:
 	default:
@@ -67,11 +125,17 @@ func (p *Config) check() error {
 		}
 	}
 
-	if p.Output == nil {
-		return errcode.Newf("output is required")
+	if err := p.normalizeOutputs(); err != nil {
+		return err
 	}
-	if p.Output.Name == "" {
-		return errcode.Newf("output.name is required")
+
+	for i, input := range p.Inputs {
+		if input.Output == "" {
+			return errcode.Newf("inputs[%d].output is required", i)
+		}
+		if _, ok := p.Outputs[input.Output]; !ok {
+			return errcode.Newf("inputs[%d].output %q not found in outputs", i, input.Output)
+		}
 	}
 
 	if p.Exporter.BlackboxProbe.Open {
@@ -96,7 +160,7 @@ func GetConfigWithFile(filename string) (*Config, error) {
 		return nil, err
 	}
 
-	if err = ec.check(); err != nil {
+	if err = ec.Check(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	return ec, nil
