@@ -1,7 +1,8 @@
 inputs:
   - name: prometheus_node_exporter
     interval: 5s # defaults 1s
-    filters: [ "processes", "textfile.directory", "systemd" ]
+    options:
+      filters: [ "processes", "textfile.directory", "systemd" ]
   - name: http
     interval: 5s
     options:
@@ -32,13 +33,13 @@ inputs:
 
 output:
   name: http
-  url: http://localhost:9091/metrics/job/test
-  interval: 10s # defaults 1s
   options:
+    url: http://localhost:9091/metrics/job/test
     print_metrics: false
 
 exporter:
   command_type: 1
+  flush_interval: 10s # defaults 1s
   global_tags:
     key: value
 

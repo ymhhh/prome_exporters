@@ -64,10 +64,14 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 
 	reg.MustRegister(
 		version.NewCollector("prome_exporters"),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		collectors.NewGoCollector(),
 		moduleUnknownCounter,
 	)
+	if !*disableExporterMetrics {
+		reg.MustRegister(
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+			collectors.NewGoCollector(),
+		)
+	}
 	h := promhttp.HandlerFor(
 		prometheus.Gatherers{reg},
 		promhttp.HandlerOpts{
@@ -77,7 +81,7 @@ func Run(a *agent.Agent, webConfig *web.FlagConfig) int {
 		},
 	)
 
-	if *disableExporterMetrics {
+	if !*disableExporterMetrics {
 		h = promhttp.InstrumentMetricHandler(reg, h)
 	}
 

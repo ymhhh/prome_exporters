@@ -79,27 +79,29 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 		}
 
 		namesSubs := strings.Split(names[1], ",sub=")
-		tags["name"] = strings.TrimSpace(namesSubs[0])
-
+		beanTags := make(map[string]string, len(tags)+4)
+		for k, v := range tags {
+			beanTags[k] = v
+		}
+		beanTags["name"] = strings.TrimSpace(namesSubs[0])
 		if len(namesSubs) > 1 {
-			tags["sub"] = strings.TrimSpace(namesSubs[1])
-		} else {
-			delete(tags, "sub")
+			beanTags["sub"] = strings.TrimSpace(namesSubs[1])
 		}
 
 		for key, value := range values {
 			if value == nil || !strings.HasPrefix(key, "tag.") {
 				continue
 			}
+			tagKey := strings.TrimPrefix(key, "tag.")
 			switch t := value.(type) {
 			case string:
 				if t = strings.TrimSpace(t); t != "" {
-					tags[strings.TrimLeft(key, "tag.")] = t
+					beanTags[tagKey] = t
 				}
 			case int, int64, int32:
-				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%d", t)
+				beanTags[tagKey] = fmt.Sprintf("%d", t)
 			case float32, float64:
-				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%f", t)
+				beanTags[tagKey] = fmt.Sprintf("%f", t)
 			}
 		}
 
@@ -149,7 +151,7 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 				},
 			}
 
-			for k, v := range tags {
+			for k, v := range beanTags {
 				key, value := k, v
 				metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
 			}

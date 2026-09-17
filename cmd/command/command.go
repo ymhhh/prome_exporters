@@ -15,7 +15,7 @@ func Run(a *agent.Agent) int {
 	}
 
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGUSR1, syscall.SIGUSR2)
 	<-ch
 	a.Stop()
 	return 0

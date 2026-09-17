@@ -30,9 +30,9 @@ type Agent struct {
 	stopChan chan struct{}
 	stopOnce sync.Once
 
-	inputWG  sync.WaitGroup
+	inputWG   sync.WaitGroup
 	metricsWG sync.WaitGroup
-	outputWG sync.WaitGroup
+	outputWG  sync.WaitGroup
 
 	runningInputs []*runningInput
 	runningOutput *runningOutput
@@ -125,10 +125,10 @@ func NewAgent(cfg *conf.Config, logger *slog.Logger) (*Agent, error) {
 
 func (p *Agent) checkConfig() error {
 
-	if p.Config.Exporter.MetricBufferLimit == 0 {
+	if p.Config.Exporter.MetricBufferLimit <= 0 {
 		p.Config.Exporter.MetricBufferLimit = 10000
 	}
-	if p.Config.Exporter.MetricBatchSize == 0 {
+	if p.Config.Exporter.MetricBatchSize <= 0 {
 		p.Config.Exporter.MetricBatchSize = 10000
 	}
 	// inputs
@@ -331,12 +331,16 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 		if metricFamily == nil {
 			continue
 		}
-		mf, ok := mapMetrics[metricFamily.GetName()]
+		// Clone so merge/global tags never mutate buffered originals.
+		// Otherwise a failed Write() + PrependMany() would retry already-merged families
+		// and duplicate samples on every flush attempt.
+		cloned := proto.Clone(metricFamily).(*dto.MetricFamily)
+		mf, ok := mapMetrics[cloned.GetName()]
 		if ok {
-			mf.Metric = append(mf.GetMetric(), metricFamily.GetMetric()...)
+			mf.Metric = append(mf.GetMetric(), cloned.GetMetric()...)
 		} else {
-			mf = metricFamily
-			names = append(names, metricFamily.GetName())
+			mf = cloned
+			names = append(names, cloned.GetName())
 		}
 		mapMetrics[mf.GetName()] = mf
 	}
@@ -449,7 +453,12 @@ func (p *Agent) stopRunningInputs() {
 			}
 			close(input.stopChan)
 		}
-		if input.input.InputType() == plugins.InputTypePrometheusCollector {
+	}
+}
+
+func (p *Agent) unregisterPrometheusInputs() {
+	for _, input := range p.runningInputs {
+		if input.input != nil && input.input.InputType() == plugins.InputTypePrometheusCollector && input.promeRegisterer != nil && input.promeCollector != nil {
 			input.promeRegisterer.Unregister(input.promeCollector)
 		}
 	}
@@ -470,9 +479,11 @@ func (p *Agent) Run() error {
 
 	p.runMetricsChan()
 	if err := p.runInputs(); err != nil {
+		_ = p.Stop()
 		return err
 	}
 	if err := p.runOutputs(); err != nil {
+		_ = p.Stop()
 		return err
 	}
 	return nil
@@ -485,13 +496,18 @@ func (p *Agent) Stop() error {
 		}
 		p.stopRunningInputs()
 		p.inputWG.Wait()
+		p.unregisterPrometheusInputs()
 
-		close(p.metricsChan)
-		select {
-		case p.stopChan <- struct{}{}:
-		default:
+		if p.metricsChan != nil {
+			close(p.metricsChan)
 		}
-		close(p.stopChan)
+		if p.stopChan != nil {
+			select {
+			case p.stopChan <- struct{}{}:
+			default:
+			}
+			close(p.stopChan)
+		}
 		p.metricsWG.Wait()
 
 		p.stopRunningOutputs()
