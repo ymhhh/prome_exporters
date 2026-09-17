@@ -12,23 +12,23 @@ import (
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
-	"github.com/ymhhh/go-common/config"
+	"github.com/ymhhh/go-common/crypto/tlsconfig"
+	"github.com/ymhhh/go-common/types"
 	"github.com/ymhhh/prome_exporters/internal"
 	"github.com/ymhhh/prome_exporters/parsers"
 	"github.com/ymhhh/prome_exporters/parsers/defaults"
 	"github.com/ymhhh/prome_exporters/plugins"
 	"github.com/ymhhh/prome_exporters/plugins/inputs"
 
-	"github.com/ymhhh/go-common/crypto/tlsconfig"
-	"github.com/ymhhh/go-common/types"
 	"gopkg.in/yaml.v3"
 )
 
 var (
 	maxErrMsgLen int64 = 1024
 
-	defaultTimeout = 10 * time.Second
-	labelInstance  = "instance"
+	defaultTimeout           = 10 * time.Second
+	defaultMaxBodySize int64 = 16 << 20
+	labelInstance            = "instance"
 )
 
 type Collector struct {
@@ -38,6 +38,9 @@ type Collector struct {
 	Timeout types.Duration    `yaml:"timeout" json:"timeout"`
 	Urls    []string          `yaml:"urls" json:"urls"`
 	Headers map[string]string `yaml:"headers" json:"headers"`
+
+	// MaxBodySize is the scrape response body cap in bytes. Zero uses 16MiB.
+	MaxBodySize int64 `yaml:"max_body_size" json:"max_body_size"`
 
 	TlsConfig *tlsconfig.Config `yaml:"tls_config" json:"tls_config"`
 
@@ -170,19 +173,30 @@ func (p *Collector) gatherServer(urlP *url.URL) (map[string]*dto.MetricFamily, e
 		return nil, err
 	}
 
-	bs, err := io.ReadAll(resp.Body)
+	limit := p.maxBodySize()
+	if cl := resp.ContentLength; cl > 0 && cl > limit {
+		return nil, fmt.Errorf("when scraping [%s] content-length %d exceeds max_body_size %d", urlP.String(), cl, limit)
+	}
+
+	bs, err := internal.ReadAllLimited(resp.Body, limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("when scraping [%s]: %w", urlP.String(), err)
 	}
 
-	tags := make(map[string]string)
-	if p.Tags != nil {
-		tags = config.DeepCopy(p.Tags).(map[string]string)
+	tags := make(map[string]string, len(p.Tags)+1)
+	for k, v := range p.Tags {
+		tags[k] = v
 	}
-
 	tags[labelInstance] = urlP.Host
 
 	return p.parser.Parse(bs, tags, resp.Header.Get("Content-Type"))
+}
+
+func (p *Collector) maxBodySize() int64 {
+	if p.MaxBodySize > 0 {
+		return p.MaxBodySize
+	}
+	return defaultMaxBodySize
 }
 
 func init() {

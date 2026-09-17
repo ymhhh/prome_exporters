@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +67,44 @@ func TestGatherPartialSuccessReturnsMetrics(t *testing.T) {
 	}
 	if len(metrics) == 0 {
 		t.Fatal("expected metrics from successful URL")
+	}
+}
+
+func TestGatherRejectsOversizedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("x", 64)))
+	}))
+	defer server.Close()
+
+	parser, err := defaults.NewParser(slog.Default(), parsers.Config{Name: "prometheus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Collector{
+		Logger:      slog.Default(),
+		Urls:        []string{server.URL},
+		MaxBodySize: 16,
+		client:      &http.Client{Timeout: time.Second},
+		parser:      parser,
+	}
+
+	_, err = p.Gather()
+	if err == nil {
+		t.Fatal("expected error for oversized body")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected exceeds error, got %v", err)
+	}
+}
+
+func TestMaxBodySizeDefault(t *testing.T) {
+	p := &Collector{}
+	if p.maxBodySize() != defaultMaxBodySize {
+		t.Fatalf("default max body size = %d, want %d", p.maxBodySize(), defaultMaxBodySize)
+	}
+	p.MaxBodySize = 32
+	if p.maxBodySize() != 32 {
+		t.Fatalf("max body size = %d, want 32", p.maxBodySize())
 	}
 }

@@ -2,13 +2,34 @@ package internal
 
 import (
 	"compress/gzip"
+	"errors"
+	"fmt"
 	"io"
 	"sync"
 )
 
+const maxDrainBytes int64 = 1 << 20
+
+var ErrBodyTooLarge = errors.New("response body exceeds limit")
+
 func IOClose(closer io.ReadCloser) {
-	_, _ = io.Copy(io.Discard, closer)
+	_, _ = io.Copy(io.Discard, io.LimitReader(closer, maxDrainBytes))
 	_ = closer.Close()
+}
+
+// ReadAllLimited reads r up to limit bytes. A non-positive limit reads without a cap.
+func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return io.ReadAll(r)
+	}
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%w (%d bytes)", ErrBodyTooLarge, limit)
+	}
+	return b, nil
 }
 
 type gzipReadCloser struct {

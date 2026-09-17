@@ -80,6 +80,9 @@ func (h *HTTP) SampleConfig() string {
 }
 
 func (h *HTTP) Close() error {
+	if h.client != nil {
+		h.client.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -143,10 +146,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer internal.IOClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		for _, nonRetryableStatusCode := range h.NonRetryableStatusCodes {
@@ -165,11 +165,6 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		}
 
 		return fmt.Errorf("when writing to [%s] received status code: %d. body: %s", h.URL, resp.StatusCode, errorLine)
-	}
-
-	_, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("when writing to [%s] received error: %v", h.URL, err)
 	}
 
 	return nil

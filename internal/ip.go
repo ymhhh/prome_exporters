@@ -4,7 +4,38 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
+
+type ipCache struct {
+	mu sync.Mutex
+	v  atomic.Value // string
+}
+
+func (c *ipCache) get(lookup func() string) string {
+	if v, ok := c.v.Load().(string); ok && v != "" {
+		return v
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if v, ok := c.v.Load().(string); ok && v != "" {
+		return v
+	}
+	ip := lookup()
+	if ip != "" {
+		c.v.Store(ip)
+	}
+	return ip
+}
+
+var defaultIPCache ipCache
+
+// GetIP returns a cached host IP. Empty lookups are not cached so a later
+// scrape can still succeed if the interface was not ready at startup.
+func GetIP() string {
+	return defaultIPCache.get(lookupIP)
+}
 
 func firstIPFromCommand(name string, args ...string) string {
 	out, err := exec.Command(name, args...).Output()
@@ -12,6 +43,33 @@ func firstIPFromCommand(name string, args ...string) string {
 		return ""
 	}
 	return firstIPFromOutput(string(out))
+}
+
+// netDial is swapped in tests to inject a fake UDP connection.
+var netDial = net.Dial
+
+// firstIPFromDefaultRoute returns the source IP the kernel would use for the
+// default route. UDP "connect" only consults the routing table; it does not
+// send packets. This is more accurate than `hostname -I`, whose address order
+// is unstable and often includes docker/VPN/bridge IPs.
+func firstIPFromDefaultRoute() string {
+	if ip := sourceIPFor("udp4", "192.0.2.1:80"); ip != "" {
+		return ip
+	}
+	return sourceIPFor("udp6", "[2001:db8::1]:80")
+}
+
+func sourceIPFor(network, address string) string {
+	conn, err := netDial(network, address)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	udp, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || udp == nil || udp.IP == nil {
+		return ""
+	}
+	return sanitizeIP(udp.IP.String())
 }
 
 // firstIPFromOutput parses output that may contain multiple IPs and returns

@@ -282,12 +282,12 @@ func (p *Agent) runInputs() error {
 			for {
 				select {
 				case <-ticker.C:
-					in.logger.Info("start_gather")
+					in.logger.Debug("start_gather")
 					metrics, err := gather(in)
 					if err != nil {
 						continue
 					}
-					in.logger.Info("input_gather_metrics", "length", len(metrics))
+					in.logger.Debug("input_gather_metrics", "length", len(metrics))
 					select {
 					case p.metricsChan <- metrics:
 					case <-p.ctx.Done():
@@ -315,7 +315,7 @@ func (p *Agent) flushBatch(runOut *runningOutput, batch int64) bool {
 		batch = lenBuffer
 	}
 
-	p.Logger.Info("write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
+	p.Logger.Debug("write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
 
 	metricBuffers, ok := p.metricsBuffer.PopMany(batch)
 	if !ok {
@@ -427,7 +427,7 @@ func (p *Agent) runMetricsChan() {
 				if !ok {
 					return
 				}
-				p.Logger.Info("read_buffer_from_metric_chan", "length", len(metrics))
+				p.Logger.Debug("read_buffer_from_metric_chan", "length", len(metrics))
 				for _, metric := range metrics {
 					lenBuffer := p.metricsBuffer.Length()
 					if lenBuffer >= p.Config.Exporter.MetricBufferLimit {

@@ -2,8 +2,7 @@
 
 package internal
 
-// GetIP todo ipv6
-func GetIP() string {
+func lookupIP() string {
 	// Most Macs use Wi‑Fi as en0; some use en1.
 	if ip := firstIPFromCommand("ipconfig", "getifaddr", "en0"); ip != "" {
 		return ip
