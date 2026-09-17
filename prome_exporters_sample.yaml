@@ -15,6 +15,7 @@ inputs:
     options:
       urls: [ "http://localhost:8080/metrics" ]
       parser: prometheus
+      max_body_size: 16777216 # bytes; default 16MiB
       tags:
         parser_type: prometheus
         cluster: test
@@ -38,8 +39,10 @@ output:
     print_metrics: false
 
 exporter:
-  command_type: 1
-  flush_interval: 10s # defaults 1s
+  command_type: 1 # 0 command, 1 server
+  flush_interval: 10s # default / minimum 1s
+  metric_buffer_limit: 10000
+  metric_batch_size: 10000
   global_tags:
     key: value
 
